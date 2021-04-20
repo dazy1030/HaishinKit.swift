@@ -4,17 +4,17 @@ extension NetSocket {
     struct CycleBuffer: CustomDebugStringConvertible {
         var bytes: UnsafePointer<UInt8>? {
             data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> UnsafePointer<UInt8>? in
-                bytes.baseAddress?.assumingMemoryBound(to: UInt8.self).advanced(by: top)
+                bytes.baseAddress?.assumingMemoryBound(to: UInt8.self).advanced(by: head)
             }
         }
         var maxLength: Int {
-            min(count, capacity - top)
+            min(count, capacity - head)
         }
         var debugDescription: String {
             Mirror(reflecting: self).debugDescription
         }
         private var count: Int {
-            let value = bottom - top
+            let value = tail - head
             return value < 0 ? value + capacity : value
         }
         private var data: Data
@@ -23,10 +23,10 @@ extension NetSocket {
                 logger.info("extends a buffer size from ", oldValue, " to ", capacity)
             }
         }
-        private var top: Int = 0
-        private var bottom: Int = 0
+        private var head: Int = 0
+        private var tail: Int = 0
         private var locked: UnsafeMutablePointer<UInt32>?
-        private var lockedBottom: Int = -1
+        private var lockedTail: Int = -1
 
         init(capacity: Int) {
             self.capacity = capacity
@@ -42,54 +42,54 @@ extension NetSocket {
             if self.locked == nil {
                 self.locked = locked
             }
-            let length = min(count, capacity - bottom)
-            self.data.replaceSubrange(bottom..<bottom + length, with: data)
+            let length = min(count, capacity - tail)
+            self.data.replaceSubrange(tail..<tail + length, with: data)
             if length < count {
-                bottom = count - length
-                self.data.replaceSubrange(0..<bottom, with: data.advanced(by: length))
+                tail = count - length
+                self.data.replaceSubrange(0..<tail, with: data.advanced(by: length))
             } else {
-                bottom += count
+                tail += count
             }
-            if capacity == bottom {
-                bottom = 0
+            if capacity == tail {
+                tail = 0
             }
             if locked != nil {
-                lockedBottom = bottom
+                lockedTail = tail
             }
         }
 
         mutating func markAsRead(_ count: Int) {
-            let length = min(count, capacity - top)
+            let length = min(count, capacity - head)
             if length < count {
-                top = count - length
+                head = count - length
             } else {
-                top += count
+                head += count
             }
-            if capacity == top {
-                top = 0
+            if capacity == head {
+                head = 0
             }
-            if let locked = locked, -1 < lockedBottom && lockedBottom <= top {
+            if let locked = locked, -1 < lockedTail && lockedTail <= head {
                 OSAtomicAnd32Barrier(0, locked)
-                lockedBottom = -1
+                lockedTail = -1
             }
         }
 
         mutating func clear() {
-            top = 0
-            bottom = 0
+            head = 0
+            tail = 0
             locked = nil
-            lockedBottom = 0
+            lockedTail = 0
         }
 
         private mutating func extend(_ data: Data) {
-            if 0 < top {
-                let subdata = self.data.subdata(in: 0..<bottom)
-                self.data.replaceSubrange(0..<capacity - top, with: self.data.advanced(by: top))
-                self.data.replaceSubrange(capacity - top..<capacity - top + subdata.count, with: subdata)
-                bottom = capacity - top + subdata.count
+            if 0 < head {
+                let subdata = self.data.subdata(in: 0..<tail)
+                self.data.replaceSubrange(0..<capacity - head, with: self.data.advanced(by: head))
+                self.data.replaceSubrange(capacity - head..<capacity - head + subdata.count, with: subdata)
+                tail = capacity - head + subdata.count
             }
             self.data.append(.init(count: capacity))
-            top = 0
+            head = 0
             capacity = self.data.count
             append(data)
         }
